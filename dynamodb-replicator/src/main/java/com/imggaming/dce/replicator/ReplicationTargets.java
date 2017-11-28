@@ -24,25 +24,33 @@ public class ReplicationTargets {
         return client;
     }
 
+    // To consider - can a single lambda handle multiple regions - retry depends on an
+    // exception being thrown back from the handleRequest method????
     public static class ReplicationTargetsImpl {
 
         private static List<Table> targets = new ArrayList<>();
+        private static boolean isSingleTarget = true;
         private static Logger logger;
+
+        private final static String REPLICATED = "Replicated";
+        private final static String LOG_LEVEL = "LOG_LEVEL";
+        private final static String TARGET_TABLE = "TARGET_TABLE";
+        private final static String TARGET_REGIONS = "TARGET_REGIONS";
 
         private ReplicationTargetsImpl(Context context) {
             logger = Logger.getLogger(ReplicationTargetsImpl.class);
 
-            String loglevel = System.getenv("LOG_LEVEL");
+            String loglevel = System.getenv(LOG_LEVEL);
             logger.setLevel(Level.toLevel(loglevel, Level.DEBUG));
 
             try {
                 // All target tables must have the same name.
-                String targetTable = System.getenv("TARGET_TABLE");
+                String targetTable = System.getenv(TARGET_TABLE);
 
                 logger.info("Target table is [" + targetTable + "]");
 
                 // Target regions are a comma-seperated string.
-                String targetRegions = System.getenv("TARGET_REGIONS");
+                String targetRegions = System.getenv(TARGET_REGIONS);
                 String[] regions = targetRegions.split(",");
 
                 List<Regions> regionList = new ArrayList<>();
@@ -64,6 +72,8 @@ public class ReplicationTargets {
                     targets.add(dynamoDB.getTable(targetTable));
                 }
 
+                // Record whether we are replicating to a single region.
+                isSingleTarget = regionList.size() < 2;
                 logger.info("Built " + regionList.size() + " target regions for replication.");
             } catch (Throwable t) {
                 logger.error("Error initialising lambda :" + t.getMessage());
@@ -72,14 +82,29 @@ public class ReplicationTargets {
 
         public void replicateItems(List<Item> items) {
             for (Item item : items) {
-                for (Table target : targets) {
-                    // Catch errors per target - we don't want a missing region to prevent us from
-                    // writing to all of the other ones.
-                    try {
-                        logger.debug("Writing a record... '" + item.toJSON() + "' to [" + target.getTableName() + "].");
-                        target.putItem(item);
-                    } catch (Throwable t) {
-                        logger.error("Error writing record '" + item.toJSON() + "' :" + t.getMessage());
+                // So... for every item we need to know whether this is a new row or one that we have
+                // already replicated from another table, in which case we are not interested and will
+                // ignore it.
+                if (!item.isPresent(REPLICATED))
+                {
+                    // Set the value - we'll ignore this item in other streams.
+                    item.withBoolean(REPLICATED, true);
+
+                    for (Table target : targets) {
+                        // Catch errors per target - we don't want a missing region to prevent us from
+                        // writing to all of the other ones.
+                        try {
+                            logger.debug("Writing a record... '" + item.toJSON() + "' to [" + target.getTableName() + "].");
+                            target.putItem(item);
+                        } catch (Throwable t) {
+                            logger.error("Error writing record '" + item.toJSON() + "' :" + t.getMessage());
+
+                            // Propagate the error if we are replicating to a single region. In these circumstances
+                            // we would like the stream to send teh event to us again for retry.
+                            if (isSingleTarget) {
+                                throw t;
+                            }
+                        }
                     }
                 }
             }

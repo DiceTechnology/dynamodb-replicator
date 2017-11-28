@@ -50,6 +50,7 @@ public class DynamodbReplicator implements RequestHandler<DynamodbEvent, Void> {
             logger.debug("DynamodbReplicator.handleRequest() completed.");
         } catch (Throwable t){
             logger.error("Exception: " + t.getMessage());
+            throw t;
         }
 
         return null;
