@@ -73,8 +73,14 @@ public class ReplicationTargets {
         public void replicateItems(List<Item> items) {
             for (Item item : items) {
                 for (Table target : targets) {
-                    logger.debug("Writing a record... '" + item.toJSON() + "' to [" + target.getTableName() + "].");
-                    target.putItem(item);
+                    // Catch errors per target - we don't want a missing region to prevent us from
+                    // writing to all of the other ones.
+                    try {
+                        logger.debug("Writing a record... '" + item.toJSON() + "' to [" + target.getTableName() + "].");
+                        target.putItem(item);
+                    } catch (Throwable t) {
+                        logger.error("Error writing record '" + item.toJSON() + "' :" + t.getMessage());
+                    }
                 }
             }
         }
