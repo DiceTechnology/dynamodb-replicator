@@ -1,0 +1,15 @@
+aws-lambda-tracking/src/main/resources/AwsCredentials.properties
+aws-lambda-tracking/target/*
+spark-task-experiments/src/main/resources/AwsCredentials.properties
+spark-task-experiments/target/*
+target/*
+.idea/
+.DS_Store
+spark-task-experiments/.DS_Store
+aws-lambda-tracking/.DS_Store
+dce-tracking.iml
+aws-lambda-tracking/aws-lambda-tracking.iml
+spark-task-experiments/spark-task-experiments.iml
+iot-experiments/src/main/resources/AwsCredentials.properties
+iot-experiments/iot-experiments.iml
+aws-lambda-tracking-api/awslambdatrackingapi.iml
