@@ -26,16 +26,16 @@ public class ReplicationTargets {
 
     // To consider - can a single lambda handle multiple regions - retry depends on an
     // exception being thrown back from the handleRequest method????
-    public static class ReplicationTargetsImpl {
+    public static final class ReplicationTargetsImpl {
 
         private static List<Table> targets = new ArrayList<>();
         private static boolean isSingleTarget = true;
         private static Logger logger;
 
-        private final static String REPLICATED = "Replicated";
-        private final static String LOG_LEVEL = "LOG_LEVEL";
-        private final static String TARGET_TABLE = "TARGET_TABLE";
-        private final static String TARGET_REGIONS = "TARGET_REGIONS";
+        private static final String REPLICATED = "Replicated";
+        private static final String LOG_LEVEL = "LOG_LEVEL";
+        private static final String TARGET_TABLE = "TARGET_TABLE";
+        private static final String TARGET_REGIONS = "TARGET_REGIONS";
 
         private ReplicationTargetsImpl(Context context) {
             logger = Logger.getLogger(ReplicationTargetsImpl.class);
@@ -80,24 +80,46 @@ public class ReplicationTargets {
             }
         }
 
-        public void replicateItems(List<Item> items) {
-            for (Item item : items) {
-                // So... for every item we need to know whether this is a new row or one that we have
-                // already replicated from another table, in which case we are not interested and will
-                // ignore it.
-                if (!item.isPresent(REPLICATED))
-                {
-                    // Set the value - we'll ignore this item in other streams.
-                    item.withBoolean(REPLICATED, true);
+        public void replicateChanges(List<ItemOperation> operations) {
+            for (ItemOperation operation: operations) {
+
+                // Updates/Inserts...
+                if (operation.isUpdate()) {
+                    Item item = operation.getItem();
+                    // So... for every item we need to know whether this is a new row or one that we have
+                    // already replicated from another table, in which case we are not interested and will
+                    // ignore it.
+
+                    if (!item.isPresent(REPLICATED))
+                    {
+                        // Set the value - we'll ignore this item in other streams.
+                        item.withBoolean(REPLICATED, true);
+
+                        for (Table target : targets) {
+                            // Catch errors per target - we don't want a missing region to prevent us from
+                            // writing to all of the other ones.
+                            try {
+                                logger.debug("Writing a record... '" + item.toJSON() + "' to [" + target.getTableName() + "].");
+                                target.putItem(item);
+                            } catch (Throwable t) {
+                                logger.error("Error writing record '" + item.toJSON() + "' :" + t.getMessage());
+
+                                // Propagate the error if we are replicating to a single region. In these circumstances
+                                // we would like the stream to send the event to us again for retry.
+                                if (isSingleTarget) {
+                                    throw t;
+                                }
+                            }
+                        }
+                    }
+                } else if (operation.isDelete()) {
 
                     for (Table target : targets) {
-                        // Catch errors per target - we don't want a missing region to prevent us from
-                        // writing to all of the other ones.
                         try {
-                            logger.debug("Writing a record... '" + item.toJSON() + "' to [" + target.getTableName() + "].");
-                            target.putItem(item);
+                            logger.debug("Deleting record... with PK = '" + operation.getPKValue() + "' from [" + target.getTableName() + "].");
+                            target.deleteItem(operation.getPKName(), operation.getPKValue());
                         } catch (Throwable t) {
-                            logger.error("Error writing record '" + item.toJSON() + "' :" + t.getMessage());
+                            logger.error("Error deleting record with PK = '" + operation.getPKValue() + "' :" + t.getMessage());
 
                             // Propagate the error if we are replicating to a single region. In these circumstances
                             // we would like the stream to send teh event to us again for retry.

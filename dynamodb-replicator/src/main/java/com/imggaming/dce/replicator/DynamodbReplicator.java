@@ -14,9 +14,6 @@ import java.util.Map;
 
 public class DynamodbReplicator implements RequestHandler<DynamodbEvent, Void> {
 
-    private static final String INSERT = "INSERT";
-    private static final String MODIFY = "MODIFY";
-
     @Override
     public Void handleRequest(DynamodbEvent dynamodbEvent, Context context) {
 
@@ -26,25 +23,35 @@ public class DynamodbReplicator implements RequestHandler<DynamodbEvent, Void> {
         try {
             logger.debug("DynamodbReplicator.handleRequest() invoked");
 
-            List<Item> items = new ArrayList<>();
+            List<ItemOperation> items = new ArrayList<>();
             List<Map<String, AttributeValue>> recordImages = null;
 
             for (DynamodbEvent.DynamodbStreamRecord record : dynamodbEvent.getRecords()) {
 
-                logger.debug("Got a record...");
                 if (record == null) {
                     continue;
                 }
 
-                if (INSERT.equals(record.getEventName()) || MODIFY.equals(record.getEventName())) {
+                String operation = record.getEventName();
+                logger.debug("Got a/an " + operation + " record...");
+
+                if (ItemOperation.INSERT.equals(operation) || ItemOperation.MODIFY.equals(operation)) {
+                    // For updates we simply want to set the item to the values contained in the new image.
                     recordImages = new ArrayList<>();
                     recordImages.add(record.getDynamodb().getNewImage());
-                    items = InternalUtils.toItemList(recordImages);
-                }
+                    Item item = InternalUtils.toItemList(recordImages).get(0);
 
-                if (!items.isEmpty()) {
-                    targets.replicateItems(items);
+                    items.add(new ItemOperation(operation, item));
+
+                } else if (ItemOperation.REMOVE.equals(operation)) {
+                    // For deletes we need the key attributes.
+                    Map<String, AttributeValue> keys = record.getDynamodb().getKeys();
+                    items.add(new ItemOperation(operation, keys));
                 }
+            }
+
+            if (!items.isEmpty()) {
+                targets.replicateChanges(items);
             }
 
             logger.debug("DynamodbReplicator.handleRequest() completed.");
@@ -56,4 +63,3 @@ public class DynamodbReplicator implements RequestHandler<DynamodbEvent, Void> {
         return null;
     }
 }
-
